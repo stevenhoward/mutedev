@@ -30,6 +30,11 @@ namespace {
 
 		return { vstr.begin(), vstr.end() };
 	}
+
+	struct device_query_result {
+		IMMDeviceCollection* devices;
+		UINT count;
+	};
 }
 
 class DeviceManagerImpl {
@@ -48,6 +53,16 @@ class DeviceManagerImpl {
 		return result;
 	}
 
+	device_query_result enum_audio_endpoints() const {
+		IMMDeviceCollection* devices;
+
+		CHECK(enumerator_->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &devices));
+
+		UINT num_devices;
+		CHECK(devices->GetCount(&num_devices));
+		return { devices, num_devices };
+	}
+
 public:
 	DeviceManagerImpl() { 
 		CoInitialize(nullptr);
@@ -64,18 +79,13 @@ public:
 	}
 	
 	vector<string> get_device_names() const {
-		IMMDeviceCollection* devices;
-
-		CHECK(enumerator_->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &devices));
-
-		UINT num_devices;
-		CHECK(devices->GetCount(&num_devices));
+		auto endpoints = enum_audio_endpoints();
 
 		vector<string> names;
-		for (UINT i = 0; i < num_devices; ++i) {
+		for (UINT i = 0; i < endpoints.count; ++i) {
 			IMMDevice* device;
 
-			CHECK(devices->Item(i, &device));
+			CHECK(endpoints.devices->Item(i, &device));
 			names.push_back(get_device_name(device));
 		}
 
@@ -85,23 +95,17 @@ public:
 	// Assumption: EnumAudioInterfaces() always returns devices in the same order.
 	// So long as the ordering is stable, the arbitrary indices will work
 	void mute(UINT index) const {
-		IAudioEndpointVolume* volume;
+		auto endpoints = enum_audio_endpoints();
 
-		IMMDeviceCollection* devices;
-
-		CHECK(enumerator_->EnumAudioEndpoints(eRender, DEVICE_STATE_ACTIVE, &devices));
-
-		UINT num_devices;
-		CHECK(devices->GetCount(&num_devices));
-
-		if (num_devices <= index) {
+		if (endpoints.count <= index) {
 			cerr << "Invalid device index.\n";
 			return;
 		}
 
 		IMMDevice* device;
-		devices->Item(index, &device);
+		endpoints.devices->Item(index, &device);
 
+		IAudioEndpointVolume* volume;
 		device->Activate(
 			__uuidof(IAudioEndpointVolume),
 			CLSCTX_ALL, 
@@ -126,3 +130,6 @@ vector<string> DeviceManager::get_device_names() const {
 void DeviceManager::mute(unsigned int index) const {
 	impl_->mute((UINT)index);
 }
+
+// Can't let the compiler auto-generate a destructor until after DeviceManagerImpl is defined
+DeviceManager::~DeviceManager() = default;
